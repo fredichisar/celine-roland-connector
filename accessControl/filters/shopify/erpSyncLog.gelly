@@ -1,0 +1,3 @@
+filter ($session: Session) on ErpSyncLog [
+  where shopId == $session.shopId
+]

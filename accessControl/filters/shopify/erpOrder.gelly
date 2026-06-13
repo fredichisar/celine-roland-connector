@@ -1,0 +1,3 @@
+filter ($session: Session) on ErpOrder [
+  where shopId == $session.shopId
+]

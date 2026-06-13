@@ -1,0 +1,3 @@
+filter ($session: Session) on ErpConnection [
+  where shopId == $session.shopId
+]
