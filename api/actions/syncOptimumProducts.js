@@ -34,7 +34,10 @@ export const run = async ({ params, logger, api }) => {
   for (const article of stocks) {
     try {
       const existing = await api.optimumProduct.maybeFindFirst({
-        filter: { codeArticle: { equals: article.code_article } },
+        filter: {
+          codeArticle: { equals: article.code_article },
+          shop: { equals: connection.shop.id },
+        },
         select: { id: true, syncStatus: true },
       });
 
@@ -80,6 +83,14 @@ export const run = async ({ params, logger, api }) => {
     errors,
     startedAt,
   });
+
+  // Réconciliation automatique avec les produits Shopify existants
+  try {
+    const reconcileResult = await api.reconcileProducts();
+    logger.info({ reconciled: reconcileResult.reconciled }, "Auto-reconciliation completed");
+  } catch (err) {
+    logger.warn({ error: err.message }, "Auto-reconciliation failed");
+  }
 
   logger.info({ received: stocks.length, accepted, errors: errors.length }, "syncOptimumProducts completed");
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLoaderData, useSubmit } from "react-router";
 import { api } from "../api";
 
@@ -9,6 +9,7 @@ export const loader = async ({ context }) => {
       id: true,
       name: true,
       notificationEmails: true,
+      orderNotificationEmails: true,
     },
     first: 1,
   });
@@ -25,6 +26,7 @@ export const action = async ({ request, context }) => {
   const connectionId = formData.get("connectionId");
   const intent = formData.get("intent");
   const notificationEmails = parseEmails(formData.get("notificationEmails"));
+  const orderNotificationEmails = parseEmails(formData.get("orderNotificationEmails"));
 
   if (intent === "create") {
     const shop = await context.api.shopifyShop.maybeFindFirst({
@@ -36,13 +38,17 @@ export const action = async ({ request, context }) => {
       erpBaseUrl: process.env.OPTIMUM_BASE_URL,
       isActive: true,
       notificationEmails,
+      orderNotificationEmails,
       shop: shop ? { _link: shop.id } : undefined,
     });
     return { saved: true };
   }
 
   if (intent === "update") {
-    await context.api.erpConnection.update(connectionId, { notificationEmails });
+    await context.api.erpConnection.update(connectionId, {
+      notificationEmails,
+      orderNotificationEmails,
+    });
     return { saved: true };
   }
 
@@ -51,20 +57,47 @@ export const action = async ({ request, context }) => {
 
 function parseEmails(raw) {
   if (!raw) return null;
-  const emails = raw.split(",").map((e) => e.trim()).filter(Boolean);
+  const emails = raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
   return emails.length > 0 ? emails : null;
+}
+
+function sanitizeEmails(raw) {
+  if (!raw) return "";
+  return raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean).join(", ");
 }
 
 export default function Settings() {
   const { connection } = useLoaderData();
   const submit = useSubmit();
   const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+
+  const errorEmailsValue = Array.isArray(connection?.notificationEmails)
+    ? connection.notificationEmails.join(", ")
+    : "";
+
+  const orderEmailsValue = Array.isArray(connection?.orderNotificationEmails)
+    ? connection.orderNotificationEmails.join(", ")
+    : "";
+
+  const [errorEmails, setErrorEmails] = useState(errorEmailsValue);
+  const [orderEmails, setOrderEmails] = useState(orderEmailsValue);
+
+  useEffect(() => {
+    setErrorEmails(errorEmailsValue);
+    setOrderEmails(orderEmailsValue);
+  }, [errorEmailsValue, orderEmailsValue]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const formData = new FormData(e.target);
+    // Sanitiser localement avant d'envoyer
+    const cleanError = sanitizeEmails(errorEmails);
+    const cleanOrder = sanitizeEmails(orderEmails);
+    setErrorEmails(cleanError);
+    setOrderEmails(cleanOrder);
+
+    const formData = new FormData();
+    formData.set("notificationEmails", cleanError);
+    formData.set("orderNotificationEmails", cleanOrder);
     if (connection) {
       formData.set("connectionId", connection.id);
       formData.set("intent", "update");
@@ -76,33 +109,11 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 3000);
   };
 
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await api.testConnection();
-      setTestResult(result);
-    } catch (err) {
-      setTestResult({ success: false, message: err.message });
-    }
-    setTesting(false);
-  };
-
-  const emailsDefault = Array.isArray(connection?.notificationEmails)
-    ? connection.notificationEmails.join(", ")
-    : "";
-
   return (
     <s-page heading="Réglages — Connecteur Optimum" inlineSize="base">
       {saved && (
         <s-banner tone="success" dismissible>
           Réglages sauvegardés avec succès.
-        </s-banner>
-      )}
-
-      {testResult && (
-        <s-banner tone={testResult.success ? "success" : "critical"} dismissible>
-          {testResult.message}
         </s-banner>
       )}
 
@@ -136,11 +147,26 @@ export default function Settings() {
         <s-section heading="Notifications">
           <s-box padding="base">
             <s-stack direction="block" gap="base">
+              <s-text type="strong">Notification des erreurs</s-text>
+              <s-text tone="subdued">En cas d'erreur de synchronisation (produits, stocks, commandes).</s-text>
               <s-text-field
-                label="Emails de notification (séparés par des virgules)"
+                label="Emails (séparés par des virgules)"
                 name="notificationEmails"
                 placeholder="fred@rocketify.io, mathieu@celine-opticien-lunetier.com"
-                defaultValue={emailsDefault}
+                value={errorEmails}
+                onChange={(e) => setErrorEmails(e.target.value)}
+              />
+
+              <s-divider />
+
+              <s-text type="strong">Notification des commandes</s-text>
+              <s-text tone="subdued">Pour chaque commande optique poussée vers Optimum (succès et erreurs).</s-text>
+              <s-text-field
+                label="Emails (séparés par des virgules)"
+                name="orderNotificationEmails"
+                placeholder="opticiens@celine-opticien-lunetier.com, mathieu@celine-opticien-lunetier.com"
+                value={orderEmails}
+                onChange={(e) => setOrderEmails(e.target.value)}
               />
 
               <s-button variant="primary" type="submit" disabled={!connection}>

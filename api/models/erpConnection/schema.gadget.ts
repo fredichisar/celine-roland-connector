@@ -28,6 +28,7 @@ export const schema: GadgetModel = {
       storageKey: "I67ZVVSpeUrP",
     },
     notificationEmails: { type: "json", storageKey: "rUXmGxuD5Q1Y" },
+    orderNotificationEmails: { type: "json", storageKey: "erpConn-orderNotifEmails" },
     shop: {
       type: "belongsTo",
       parent: { model: "shopifyShop" },

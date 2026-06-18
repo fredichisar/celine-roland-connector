@@ -156,7 +156,10 @@ export const permissions: GadgetPermissions = {
       },
       actions: {
         getProductCounts: true,
+        pushOrderToOptimum: true,
         pushProductToShopify: true,
+        reconcileProducts: true,
+        sendOrderNotification: true,
         syncOptimumProducts: true,
         testConnection: true,
       },

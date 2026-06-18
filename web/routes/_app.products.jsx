@@ -104,6 +104,12 @@ export const action = async ({ request, context }) => {
     return { refreshed: true, enqueuedAt };
   }
 
+  if (intent === "reconcile") {
+    const enqueuedAt = new Date().toISOString();
+    await context.api.enqueue(context.api.reconcileProducts);
+    return { reconciling: true, enqueuedAt };
+  }
+
   if (intent === "sync") {
     const ids = formData.getAll("productIds");
     if (ids.length > 0) {
@@ -253,6 +259,18 @@ export default function Products() {
     setSelected(new Set());
   };
 
+  const handleReconcile = () => {
+    const formData = new FormData();
+    formData.set("intent", "reconcile");
+    submit(formData, { method: "post" });
+    setBanner({ tone: "info", message: "Réconciliation avec Shopify en cours..." });
+    setTimeout(() => {
+      revalidator.revalidate();
+      setBanner({ tone: "success", message: "Réconciliation terminée." });
+      setTimeout(() => setBanner(null), 5000);
+    }, 3000);
+  };
+
   const handleRefresh = () => {
     const enqueuedAt = new Date().toISOString();
     setRefreshing(true);
@@ -350,6 +368,9 @@ export default function Products() {
         <s-stack direction="inline" gap="base" alignItems="center">
           <s-button variant="primary" onClick={handleRefresh} disabled={isLoading || refreshing}>
             {refreshing ? "Rafraîchissement en cours..." : "Rafraîchir depuis Optimum"}
+          </s-button>
+          <s-button variant="secondary" onClick={handleReconcile} disabled={isLoading || refreshing}>
+            Réconcilier avec Shopify
           </s-button>
           {selected.size > 0 && (
             <>

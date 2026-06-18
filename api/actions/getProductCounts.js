@@ -1,9 +1,22 @@
 /** @type { ActionRun } */
 export const run = async ({ api }) => {
+  const connection = await api.erpConnection.maybeFindFirst({
+    filter: { isActive: { equals: true } },
+    select: { shop: { id: true } },
+  });
+
+  const shopId = connection?.shop?.id;
+  if (!shopId) {
+    return { pending: 0, synced: 0, skipped: 0, error: 0, total: 0 };
+  }
+
   const [pending, synced, skipped, error] = await Promise.all(
     ["pending", "synced", "skipped", "error"].map((status) =>
       api.internal.optimumProduct.findMany({
-        filter: { syncStatus: { equals: status } },
+        filter: {
+          syncStatus: { equals: status },
+          shopId: { equals: shopId },
+        },
         select: { id: true },
       })
     )
