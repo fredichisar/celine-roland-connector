@@ -2,7 +2,7 @@ import { createOptimumClient } from "../utils/optimum-client";
 import { logSyncOperation } from "../utils/erp-log";
 
 /** @type { ActionRun } */
-export const run = async ({ params, logger, api }) => {
+export const run = async ({ params, logger, api, connections }) => {
   const { erpOrderId } = params;
 
   if (!erpOrderId) {
@@ -96,59 +96,112 @@ export const run = async ({ params, logger, api }) => {
     logger.info({ visiteId }, "Visite created in Optimum");
 
     // --- 3. OFFRE: matcher les line items et créer l'offre ---
-    // Matching strategy:
-    // - Montures: match par SKU Shopify → optimumProduct.codeArticle
-    // - Verres personnalisés: match par _optimum_ref (property line item) → optimumProduct.codeArticle
+    // Matching strategy (par ordre de priorité) :
+    // 1. _code_article (property line item, posée par Thibault sur les verres)
+    // 2. custom.code_article (metafield variante Shopify, peuplé sur 62% du catalogue)
+    // 3. SKU (fallback)
+    //
+    // Articles avec lot_mouvement_id → articles_stock (montures en stock)
+    // Articles sans lot_mouvement_id → articles_catalogues (verres du catalogue)
     const lineItems = payload.line_items || [];
     const articlesStock = [];
+    const articlesCatalogues = [];
     const unmatchedItems = [];
 
     for (const item of lineItems) {
-      // Déterminer la clé de matching : _optimum_ref pour les verres, SKU pour les montures
-      const matchKey = item.optimum_ref || item.sku;
+      // Priorité 1 : _code_article (property line item)
+      let matchKey = item.code_article;
+
+      // Priorité 2 : metafield custom.code_article sur la variante Shopify
+      if (!matchKey && item.sku) {
+        const variant = await api.shopifyProductVariant.maybeFindFirst({
+          filter: {
+            sku: { equals: item.sku },
+            shopId: { equals: connection.shop.id },
+          },
+          select: { id: true },
+        });
+        if (variant) {
+          const shopify = await connections.shopify.forShopId(connection.shop.id);
+          try {
+            const metafieldResult = await shopify.graphql(`query ($id: ID!) {
+              productVariant(id: $id) {
+                metafield(namespace: "custom", key: "code_article") { value }
+              }
+            }`, { id: `gid://shopify/ProductVariant/${variant.id}` });
+            matchKey = metafieldResult?.productVariant?.metafield?.value || null;
+          } catch (err) {
+            logger.warn({ sku: item.sku, error: err.message }, "Failed to fetch code_article metafield");
+          }
+        }
+      }
+
+      // Priorité 3 : SKU comme fallback
+      if (!matchKey) matchKey = item.sku;
 
       if (!matchKey) {
-        unmatchedItems.push({ title: item.title, reason: "no SKU and no _optimum_ref" });
+        unmatchedItems.push({ title: item.title, reason: "no code_article, no metafield, no SKU" });
         continue;
       }
 
       const optimumProduct = await api.optimumProduct.maybeFindFirst({
         filter: {
           codeArticle: { equals: matchKey },
-          shop: { equals: connection.shop.id },
+          shopId: { equals: connection.shop.id },
         },
-        select: { id: true, lotMouvementId: true, articleTypeId: true, syncStatus: true },
+        select: {
+          id: true,
+          lotMouvementId: true,
+          articleTypeId: true,
+          codeFabricant: true,
+          codeArticle: true,
+          syncStatus: true,
+        },
       });
 
       if (!optimumProduct) {
         unmatchedItems.push({
           sku: item.sku,
-          optimum_ref: item.optimum_ref,
+          code_article: matchKey,
           title: item.title,
-          reason: item.optimum_ref
-            ? `_optimum_ref "${item.optimum_ref}" not found in optimumProduct`
-            : `SKU "${item.sku}" not found in optimumProduct`,
+          reason: `code_article "${matchKey}" not found in optimumProduct`,
         });
         continue;
       }
 
+      const articleTypeId = parseInt(optimumProduct.articleTypeId, 10);
+      const prixDeVente = parseFloat(item.price) || 0;
+
       for (let i = 0; i < (item.quantity || 1); i++) {
-        articlesStock.push({
-          lot_mouvement_id: optimumProduct.lotMouvementId,
-          article_type_id: parseInt(optimumProduct.articleTypeId, 10),
-          prix_de_vente: parseFloat(item.price) || 0,
-        });
+        if (optimumProduct.lotMouvementId) {
+          // Article en stock (montures typiquement)
+          articlesStock.push({
+            lot_mouvement_id: optimumProduct.lotMouvementId,
+            article_type_id: articleTypeId,
+            prix_de_vente: prixDeVente,
+          });
+        } else {
+          // Article catalogue (verres typiquement)
+          articlesCatalogues.push({
+            article_type_id: articleTypeId,
+            code_article: optimumProduct.codeArticle,
+            code_fabricant: optimumProduct.codeFabricant || "ESS",
+            code_fournisseur: optimumProduct.codeFabricant || "ESS",
+            prix_de_vente: prixDeVente,
+            oeil: item.lens_type ? (i === 0 ? 1 : 2) : 0,
+            diametre: 65,
+          });
+        }
       }
     }
 
-    if (articlesStock.length === 0) {
-      throw new Error(`No matching products found. Unmatched: ${unmatchedItems.map((i) => i.optimum_ref || i.sku || i.title).join(", ")}`);
+    if (articlesStock.length === 0 && articlesCatalogues.length === 0) {
+      throw new Error(`No matching products found. Unmatched: ${unmatchedItems.map((i) => i.code_article || i.sku || i.title).join(", ")}`);
     }
 
-    const offreResult = await client.createOffre(optimumClientId, visiteId, {
+    const offreBody = {
       type_equipement: 1,
       type_prescription: 1,
-      articles_stock: articlesStock,
       options_offre: {
         offre_remboursee: false,
         tiers_payant_ro: false,
@@ -157,7 +210,11 @@ export const run = async ({ params, logger, api }) => {
         teletransmission_ro: false,
         teletransmission_rc_1: false,
       },
-    });
+    };
+    if (articlesStock.length > 0) offreBody.articles_stock = articlesStock;
+    if (articlesCatalogues.length > 0) offreBody.articles_catalogues = articlesCatalogues;
+
+    const offreResult = await client.createOffre(optimumClientId, visiteId, offreBody);
 
     if (!offreResult.status) {
       throw new Error(`Failed to create offre: ${offreResult.message || "unknown error"}`);

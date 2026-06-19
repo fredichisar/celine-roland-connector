@@ -95,6 +95,8 @@ export async function handleOrderForOptimum({ record, logger, api }) {
         quantity: li.quantity,
         price: li.price,
         name: li.name,
+        // Clé Optimum : _code_article (property line item, posée par Thibault) ou _optimum_ref (legacy)
+        code_article: props._code_article || null,
         optimum_ref: props._optimum_ref || null,
         lens_type: props._lens_type || null,
         lens_options: props._lens_options || null,

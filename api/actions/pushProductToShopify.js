@@ -63,7 +63,7 @@ export const run = async ({ params, logger, api, connections }) => {
   const shopify = await connections.shopify.forShopId(connection.shop.id);
 
   const location = await api.shopifyLocation.maybeFindFirst({
-    filter: { active: { equals: true }, shop: { equals: connection.shop.id } },
+    filter: { active: { equals: true }, shopId: { equals: connection.shop.id } },
     select: { id: true },
   });
   const locationGid = location ? `gid://shopify/Location/${location.id}` : null;

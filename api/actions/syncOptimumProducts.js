@@ -36,7 +36,7 @@ export const run = async ({ params, logger, api }) => {
       const existing = await api.optimumProduct.maybeFindFirst({
         filter: {
           codeArticle: { equals: article.code_article },
-          shop: { equals: connection.shop.id },
+          shopId: { equals: connection.shop.id },
         },
         select: { id: true, syncStatus: true },
       });
